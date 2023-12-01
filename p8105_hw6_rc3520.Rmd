@@ -101,6 +101,13 @@ model_results |>
 ```
 
 #Problem 2
+```{r setup, include=FALSE}
+library(tidyverse)
+library(modelr)
+library(mgcv)
+```
+
+
 ```{r}
 weather_df = 
   rnoaa::meteo_pull_monitors(
@@ -117,9 +124,100 @@ view(weather_df)
 ```
 
 ```{r}
+set.seed(1)
+```
 
+```{r}
+boot_sample = function (df) {
+  sample_frac(df, replace = TRUE)
+}
+```
+
+```{r}
+boot_sample <- function(df) {
+  dplyr::sample_frac(df, replace = TRUE)
+}
 ```
 
 
-  
+```{r}
+boostrap_result = 
+  tibble(number = 1:5000) |>
+  mutate(strap_sample = map(number, ~boot_sample(weather_df)),
+    models = map(strap_sample, ~lm(tmax ~ tmin + prcp, data = .)),
+    r_squared = map(models, broom::glance),
+    results = map(models, broom::tidy))|>
+  select(number, results, r_squared) |>
+  unnest(results, r_squared)|>
+  select(number, term, estimate, r.squared)|>
+  pivot_wider(
+    names_from = "term",
+    values_from = "estimate" 
+  )|>
+  janitor:: clean_names()|>
+  # log(b1*b2)
+  mutate(
+    log_beta= log(tmin*prcp)
+  )|>
+  select(strap_number, r_squared, log_beta)
+
+print(boostrap_result)
+```
+
+
+```{r}
+# Define a function to create a bootstrapped sample
+boostrap_sample = function(df) {
+  sample_frac(df, replace = TRUE)
+}
+
+# Generate 5000 bootstrap samples and fit linear regression models
+boostrap_result = tibble(number = 1:5000) %>%
+  mutate(
+    strap_sample = map(number, ~boot_sample(weather_df)),
+    models = map(strap_sample, ~lm(tmax ~ tmin + prcp, data = .)),
+    r2 = map(models, broom::glance),
+    results = map(models, broom::tidy)
+  ) |>
+  select(number, results, r2) |>
+  unnest(results, r2) |>
+  select(number, estimate, r.squared, term) |>
+  pivot_wider(names_from = "term",
+    values_from = "estimate" ) |>
+  # Calculate and include log transformation of the product of tmin and prcp
+  mutate( log_b1_b2 = log(tmin * prcp)) |>
+  select(number, r.squared, log_b1_b2)
+
+print(boostrap_result)
+```
+
+```{r}
+boostrap_result|>
+  janitor:: clean_names()|>
+  ggplot(aes(x=r_squared)) +
+  geom_density()
+```
+
+```{r}
+boostrap_result |>
+  ggplot(aes(x = log_b1_b2)) +
+  geom_density()
+```
+
+
+```{r}
+boostrap_result |>
+  janitor::clean_names() |>
+  pivot_longer(
+    r_squared:log_b1_b2,
+    names_to = "estimate",
+    values_to = "value"
+  ) |>
+  group_by(estimate) |>
+  summarize(
+    ci_lower = quantile(value[!is.na(value)], 0.025),
+    ci_upper = quantile(value[!is.na(value)], 0.975)
+  ) |>
+  knitr::kable(digits = 3)
+```
 
