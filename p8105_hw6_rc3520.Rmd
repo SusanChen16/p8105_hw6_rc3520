@@ -31,7 +31,7 @@ theme_set(theme_minimal() + theme(legend.position = "bottom"))
 
 #Problem 1
 ```{r load_libraries}
-library(tidyverse)
+
 library(modelr)
 ```
 
@@ -91,7 +91,7 @@ model_results |>
 ```
 
 
-In the following visualization, we present a plot depicting the estimated Odds Ratios (ORs) and Confidence Intervals (CIs) for each city, arranged in ascending order based on the magnitude of the OR. The plot reveals a prevalent trend where most cities exhibit odds ratios below 1. This implies that, even after accounting for victim age and race, crimes involving male victims tend to have lower odds of resolution compared to those involving female victims. The observed disparity is particularly pronounced in New York. Additionally, in approximately half of these cities, the confidence intervals are narrow and exclude the value 1, indicating a statistically significant difference in resolution rates based on gender, even after adjusting for victim age and race.
+##In the following visualization, we present a plot depicting the estimated Odds Ratios (ORs) and Confidence Intervals (CIs) for each city, arranged in ascending order based on the magnitude of the OR. The plot reveals a prevalent trend where most cities exhibit odds ratios below 1. This implies that, even after accounting for victim age and race, crimes involving male victims tend to have lower odds of resolution compared to those involving female victims. The observed disparity is particularly pronounced in New York. Additionally, in approximately half of these cities, the confidence intervals are narrow and exclude the value 1, indicating a statistically significant difference in resolution rates based on gender, even after adjusting for victim age and race.
 ```{r}
 model_results |> 
   ggplot(aes(fct_reorder(city_state,OR),OR)) + 
@@ -101,12 +101,6 @@ model_results |>
 ```
 
 #Problem 2
-```{r setup, include=FALSE}
-library(tidyverse)
-library(modelr)
-library(mgcv)
-```
-
 
 ```{r}
 weather_df = 
@@ -127,42 +121,6 @@ view(weather_df)
 set.seed(1)
 ```
 
-```{r}
-boot_sample = function (df) {
-  sample_frac(df, replace = TRUE)
-}
-```
-
-```{r}
-boot_sample <- function(df) {
-  dplyr::sample_frac(df, replace = TRUE)
-}
-```
-
-
-```{r}
-boostrap_result = 
-  tibble(number = 1:5000) |>
-  mutate(strap_sample = map(number, ~boot_sample(weather_df)),
-    models = map(strap_sample, ~lm(tmax ~ tmin + prcp, data = .)),
-    r_squared = map(models, broom::glance),
-    results = map(models, broom::tidy))|>
-  select(number, results, r_squared) |>
-  unnest(results, r_squared)|>
-  select(number, term, estimate, r.squared)|>
-  pivot_wider(
-    names_from = "term",
-    values_from = "estimate" 
-  )|>
-  janitor:: clean_names()|>
-  # log(b1*b2)
-  mutate(
-    log_beta= log(tmin*prcp)
-  )|>
-  select(strap_number, r_squared, log_beta)
-
-print(boostrap_result)
-```
 
 
 ```{r}
@@ -174,7 +132,7 @@ boostrap_sample = function(df) {
 # Generate 5000 bootstrap samples and fit linear regression models
 boostrap_result = tibble(number = 1:5000) %>%
   mutate(
-    strap_sample = map(number, ~boot_sample(weather_df)),
+    strap_sample = map(number, ~boostrap_sample(weather_df)),
     models = map(strap_sample, ~lm(tmax ~ tmin + prcp, data = .)),
     r2 = map(models, broom::glance),
     results = map(models, broom::tidy)
@@ -204,7 +162,6 @@ boostrap_result |>
   geom_density()
 ```
 
-
 ```{r}
 boostrap_result |>
   janitor::clean_names() |>
@@ -220,4 +177,85 @@ boostrap_result |>
   ) |>
   knitr::kable(digits = 3)
 ```
+##The 95% confidence interval of log_b1_b2 is (-8.982, -4.602);
+The 95% confidence interval of r_squared is (0.889, 0.941);
+#Problem3
+```{r}
+birthweight_df = 
+  read_csv("data/birthweight.csv") |>
+  janitor::clean_names()|>
+  mutate(
+    babysex = ifelse(babysex == 1, "Male", "Female"),
+    frace = 
+      case_match(
+             frace,
+             1 ~ "White", 
+             2 ~ "Black", 
+             3 ~ "Asian", 
+             4 ~ "Puerto Rican", 
+             8 ~ "Other", 
+             9 ~ "Unknown"),
+         frace = as.factor(frace),
+    malform = ifelse(malform == 0, "Absent", "Present"),
+    mrace = 
+           case_match(
+             mrace,
+             1 ~ "White", 
+             2 ~ "Black", 
+             3 ~ "Asian", 
+             4 ~ "Puerto Rican", 
+             8 ~ "Other"),
+         mrace = as.factor(mrace))|>
+  drop_na()
 
+view(birthweight_df)
+```
+## I propose a regression model for birthweight will be predicted by babysex, mother's height, mother’s age at delivery (years),  number of live births prior to this pregnancy, mother’s pre-pregnancy weight (pounds) and average number of cigarettes smoked per day during pregnancy in which the na data is exclude.
+```{r}
+bwt_model = 
+  birthweight_df|>
+  lm(bwt ~ babysex + mheight + momage + parity + ppwt + smoken, data = _)
+
+birthweight_df |>
+  add_predictions(bwt_model) |>
+  add_residuals(bwt_model) |>
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point(size = 2, alpha = 0.6) +
+  labs(title = "Model Fitted Values VS. Residuals",
+       x = "Fitted value",
+       y = "Residual")
+```
+
+```{r}
+second_model =
+  birthweight_df|>
+  lm(bwt ~ blength + gaweeks, data = _)
+
+third_model = 
+  birthweight_df|>
+  lm(bwt ~ bhead + blength + babysex + bhead*babysex + blength*babysex + bhead*blength, data = _)
+
+
+cv_df = 
+  crossv_mc(birthweight_df, 100) |>
+   mutate(
+    model_birthweight  = map(train, \(df) bwt_model),
+    model_second  = map(train, \(df) second_model),
+    model_third  = map(train, \(df) third_model)) |> 
+  mutate(
+    rmse_model_birthweight = map2_dbl(model_birthweight, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_model_second = map2_dbl(model_second, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_model_third = map2_dbl(model_third, test, \(mod, df) rmse(model = mod, data = df)))
+
+cv_df |>
+  select(starts_with("rmse")) |> 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") |> 
+  mutate(model = fct_inorder(model)) |> 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+
+```
+##Based on the plot above that shows the distribution of RMSE values for each candidate model, I think model_third( has the lowest rmse) do the best job predicting the birthweight.
